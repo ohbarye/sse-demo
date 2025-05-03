@@ -4,65 +4,237 @@
   <title>Server-Sent Events Demo</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
-    #status, #result { 
-      margin: 10px 0; 
-      padding: 10px; 
-      border: 1px solid #ddd; 
+    .connection {
+      margin: 10px 0;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background-color: #f9f9f9;
     }
-    button { padding: 5px 10px; }
+    .status, .result { 
+      margin: 10px 0; 
+      padding: 5px; 
+    }
+    .status { color: #555; }
+    .result { color: #28a745; font-weight: bold; }
+    button { 
+      padding: 5px 10px; 
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button:hover { background-color: #0069d9; }
+    .connections-container {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-gap: 15px;
+    }
+    .controls {
+      margin: 20px 0;
+    }
+    #startAllBtn {
+      background-color: #28a745;
+      padding: 8px 16px;
+      font-size: 16px;
+    }
+    .server-stats {
+      background-color: #f8f9fa;
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+    .thread {
+      display: inline-block;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background-color: #ccc;
+      margin-right: 5px;
+      margin-bottom: 5px;
+    }
+    .thread.active {
+      background-color: #28a745;
+    }
   </style>
 </head>
 <body>
-  <h1>Server-Sent Events Demo</h1>
-  <p>「処理を開始」ボタンをクリックして、5秒後にサーバーからの通知を受け取ります。</p>
+  <h1>Server-Sent Events テスト</h1>
+  <p>複数のSSE接続を同時に開始し、サーバーの同時接続処理を検証できます。各接続は5秒後に結果を返します。</p>
   
-  <button id="startBtn">処理を開始</button>
-  <div id="status">状態: 未接続</div>
-  <div id="result"></div>
+  <div class="server-stats">
+    <h3>サーバー情報</h3>
+    <p>Pumaサーバー設定: <strong>3スレッド</strong></p>
+    <p>スレッド使用状況: <span id="thread-count">0</span> / 3 アクティブ</p>
+    <div id="thread-indicators"></div>
+  </div>
+  
+  <div class="controls">
+    <button id="startAllBtn">すべての接続を開始</button>
+  </div>
+  
+  <div class="connections-container" id="connectionsContainer">
+    <!-- 接続コンテナはJavaScriptで動的に生成されます -->
+  </div>
   
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      const startBtn = document.getElementById('startBtn');
-      const statusDiv = document.getElementById('status');
-      const resultDiv = document.getElementById('result');
-      let eventSource = null;
+      const connectionsContainer = document.getElementById('connectionsContainer');
+      const startAllBtn = document.getElementById('startAllBtn');
+      const threadCountSpan = document.getElementById('thread-count');
+      const threadIndicators = document.getElementById('thread-indicators');
       
-      startBtn.addEventListener('click', function() {
+      // 10個の接続コンテナを作成
+      const connectionCount = 10;
+      const connections = [];
+      const activeThreads = {};
+      
+      // スレッドインジケーターを作成
+      for (let i = 1; i <= 3; i++) {
+        const threadIndicator = document.createElement('div');
+        threadIndicator.className = 'thread';
+        threadIndicator.id = `thread-${i}`;
+        threadIndicators.appendChild(threadIndicator);
+      }
+      
+      for (let i = 1; i <= connectionCount; i++) {
+        const connectionDiv = document.createElement('div');
+        connectionDiv.className = 'connection';
+        connectionDiv.innerHTML = `
+          <h3>接続 #${i}</h3>
+          <button class="start-btn" data-id="${i}">接続 #${i} を開始</button>
+          <div class="status" id="status-${i}">状態: 未接続</div>
+          <div class="result" id="result-${i}"></div>
+        `;
+        connectionsContainer.appendChild(connectionDiv);
+        
+        connections.push({
+          id: i,
+          element: connectionDiv,
+          eventSource: null,
+          threadId: null
+        });
+      }
+      
+      // 個別の接続開始ボタンのイベントリスナー
+      document.querySelectorAll('.start-btn').forEach(button => {
+        button.addEventListener('click', function() {
+          const connectionId = this.getAttribute('data-id');
+          startConnection(connectionId);
+        });
+      });
+      
+      // すべての接続を開始するボタン
+      startAllBtn.addEventListener('click', function() {
+        // すべてのアクティブなスレッドをリセット
+        Object.keys(activeThreads).forEach(threadId => {
+          delete activeThreads[threadId];
+          updateThreadIndicators();
+        });
+        
+        connections.forEach(connection => {
+          startConnection(connection.id);
+        });
+      });
+      
+      // スレッドインジケーターを更新
+      function updateThreadIndicators() {
+        const count = Object.keys(activeThreads).length;
+        threadCountSpan.textContent = count;
+        
+        // すべてのインジケーターをリセット
+        document.querySelectorAll('.thread').forEach(indicator => {
+          indicator.className = 'thread';
+        });
+        
+        // アクティブなスレッドのインジケーターを更新
+        let index = 1;
+        Object.keys(activeThreads).forEach(threadId => {
+          const indicator = document.getElementById(`thread-${index}`);
+          if (indicator) {
+            indicator.className = 'thread active';
+            indicator.title = `Thread ID: ${threadId}`;
+          }
+          index++;
+        });
+      }
+      
+      // 接続の開始処理
+      function startConnection(connectionId) {
+        const connection = connections.find(c => c.id == connectionId);
+        const statusDiv = document.getElementById(`status-${connectionId}`);
+        const resultDiv = document.getElementById(`result-${connectionId}`);
+        
         statusDiv.textContent = '状態: 接続中...';
         resultDiv.textContent = '';
         
         // 既存の接続を閉じる
-        if (eventSource) {
-          eventSource.close();
+        if (connection.eventSource) {
+          connection.eventSource.close();
+          connection.eventSource = null;
+          
+          if (connection.threadId && activeThreads[connection.threadId]) {
+            delete activeThreads[connection.threadId];
+            updateThreadIndicators();
+          }
+          connection.threadId = null;
         }
         
         // 新しい接続を開始
-        eventSource = new EventSource('/events/stream');
+        connection.eventSource = new EventSource('/events/stream');
         
         // 接続イベント
-        eventSource.addEventListener('connected', function(e) {
+        connection.eventSource.addEventListener('connected', function(e) {
           const data = JSON.parse(e.data);
           statusDiv.textContent = '状態: ' + data.message;
+          
+          // スレッドIDを記録
+          if (data.thread_id) {
+            connection.threadId = data.thread_id;
+            activeThreads[data.thread_id] = true;
+            updateThreadIndicators();
+          }
         });
         
         // 結果イベント
-        eventSource.addEventListener('result', function(e) {
+        connection.eventSource.addEventListener('result', function(e) {
           const data = JSON.parse(e.data);
           resultDiv.textContent = '結果: ' + data.message;
+          resultDiv.textContent += ` (処理時間: ${data.processing_time}ms)`;
+          resultDiv.textContent += ` (スレッドID: ${data.thread_id})`;
           
           // 接続を閉じる
-          eventSource.close();
+          connection.eventSource.close();
+          connection.eventSource = null;
+          
+          // スレッド使用状況を更新
+          if (connection.threadId && activeThreads[connection.threadId]) {
+            delete activeThreads[connection.threadId];
+            updateThreadIndicators();
+          }
+          connection.threadId = null;
+          
           statusDiv.textContent = '状態: 完了';
         });
         
         // エラーハンドリング
-        eventSource.onerror = function() {
+        connection.eventSource.onerror = function() {
           statusDiv.textContent = '状態: エラーが発生しました';
-          if (eventSource) {
-            eventSource.close();
+          if (connection.eventSource) {
+            connection.eventSource.close();
+            connection.eventSource = null;
           }
+          
+          // スレッド使用状況を更新
+          if (connection.threadId && activeThreads[connection.threadId]) {
+            delete activeThreads[connection.threadId];
+            updateThreadIndicators();
+          }
+          connection.threadId = null;
         };
-      });
+      }
     });
   </script>
 </body>
