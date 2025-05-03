@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Server-Sent Events Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    #status, #result { 
+      margin: 10px 0; 
+      padding: 10px; 
+      border: 1px solid #ddd; 
+    }
+    button { padding: 5px 10px; }
+  </style>
+</head>
+<body>
+  <h1>Server-Sent Events Demo</h1>
+  <p>「処理を開始」ボタンをクリックして、5秒後にサーバーからの通知を受け取ります。</p>
+  
+  <button id="startBtn">処理を開始</button>
+  <div id="status">状態: 未接続</div>
+  <div id="result"></div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const startBtn = document.getElementById('startBtn');
+      const statusDiv = document.getElementById('status');
+      const resultDiv = document.getElementById('result');
+      let eventSource = null;
+      
+      startBtn.addEventListener('click', function() {
+        statusDiv.textContent = '状態: 接続中...';
+        resultDiv.textContent = '';
+        
+        // 既存の接続を閉じる
+        if (eventSource) {
+          eventSource.close();
+        }
+        
+        // 新しい接続を開始
+        eventSource = new EventSource('/events/stream');
+        
+        // 接続イベント
+        eventSource.addEventListener('connected', function(e) {
+          const data = JSON.parse(e.data);
+          statusDiv.textContent = '状態: ' + data.message;
+        });
+        
+        // 結果イベント
+        eventSource.addEventListener('result', function(e) {
+          const data = JSON.parse(e.data);
+          resultDiv.textContent = '結果: ' + data.message;
+          
+          // 接続を閉じる
+          eventSource.close();
+          statusDiv.textContent = '状態: 完了';
+        });
+        
+        // エラーハンドリング
+        eventSource.onerror = function() {
+          statusDiv.textContent = '状態: エラーが発生しました';
+          if (eventSource) {
+            eventSource.close();
+          }
+        };
+      });
+    });
+  </script>
+</body>
+</html>
